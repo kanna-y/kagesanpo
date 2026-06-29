@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>かげさんぽ</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+:root {
+  --green:#059669; --red:#dc2626; --blue:#2563eb;
+  --purple:#7c3aed; --cyan:#0891b2; --orange:#ea580c;
+  --surface:#fff; --bg:#f0fdf4; --text:#0f172a;
+  --muted:#64748b; --border:#e2e8f0;
+  --safe:env(safe-area-inset-bottom,16px);
+}
+html,body { height:100%; overflow:hidden; font-family:'Hiragino Kaku Gothic ProN','Hiragino Sans',sans-serif; background:var(--bg); }
+
+#map { position:fixed; inset:0; z-index:1; }
+
+/* トップバー */
+#topbar { position:fixed; top:0; left:0; right:0; z-index:500; padding:12px 12px 0; pointer-events:none; }
+#searchbox {
+  pointer-events:all; display:flex; align-items:center; gap:8px;
+  background:var(--surface); border-radius:24px; padding:10px 14px;
+  box-shadow:0 2px 16px rgba(0,0,0,.15);
+}
+.app-name { font-size:16px; font-weight:800; color:var(--green); white-space:nowrap; }
+#searchbox input { flex:1; border:none; outline:none; font-size:14px; color:var(--text); background:transparent; font-family:inherit; min-width:0; }
+#searchbox input::placeholder { color:#94a3b8; }
+.temp-badge { background:#f0fdf4; color:var(--green); font-size:11px; font-weight:700; padding:4px 9px; border-radius:14px; white-space:nowrap; flex-shrink:0; }
+
+#chips { pointer-events:all; display:flex; gap:6px; overflow-x:auto; scrollbar-width:none; padding:8px 0 10px; }
+#chips::-webkit-scrollbar { display:none; }
+.chip { flex-shrink:0; padding:5px 13px; border-radius:18px; border:1.5px solid var(--border); background:var(--surface); font-size:12px; font-weight:600; cursor:pointer; color:var(--muted); box-shadow:0 1px 3px rgba(0,0,0,.07); white-space:nowrap; transition:all .15s; user-select:none; }
+.chip.on { color:#fff !important; border-color:transparent !important; }
+.chip[data-f=all].on     { background:#0f172a; }
+.chip[data-f=shade].on   { background:var(--green); }
+.chip[data-f=danger].on  { background:var(--red); }
+.chip[data-f=vending].on { background:var(--blue); }
+.chip[data-f=shop].on    { background:var(--purple); }
+.chip[data-f=hospital].on{ background:var(--red); }
+.chip[data-f=rest].on    { background:var(--cyan); }
+
+/* 現在地ボタン */
+#btn-locate { position:fixed; right:12px; bottom:112px; z-index:300; width:46px; height:46px; border-radius:50%; background:var(--surface); border:none; cursor:pointer; box-shadow:0 2px 12px rgba(0,0,0,.18); font-size:20px; display:flex; align-items:center; justify-content:center; transition:bottom .3s cubic-bezier(.32,.72,0,1); }
+
+/* ボトムシート */
+#sheet { position:fixed; bottom:0; left:0; right:0; z-index:400; background:var(--surface); border-radius:22px 22px 0 0; box-shadow:0 -2px 20px rgba(0,0,0,.12); display:flex; flex-direction:column; transition:height .32s cubic-bezier(.32,.72,0,1); height:72px; max-height:80vh; overscroll-behavior:contain; }
+#sheet-handle-area { flex-shrink:0; padding:10px 0 0; cursor:pointer; display:flex; flex-direction:column; align-items:center; }
+#sheet-handle { width:38px; height:4px; background:var(--border); border-radius:2px; margin-bottom:8px; }
+#sheet-header { width:100%; padding:0 16px 10px; display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--border); }
+#sheet-label { font-size:14px; font-weight:800; }
+#sheet-count { font-size:12px; color:var(--muted); }
+#spot-list { overflow-y:auto; flex:1; -webkit-overflow-scrolling:touch; }
+
+/* スポット行 */
+.srow { display:flex; align-items:center; gap:12px; padding:13px 16px; border-bottom:1px solid var(--border); cursor:pointer; }
+.srow:last-child { border-bottom:none; }
+.srow:active { background:#f8fafc; }
+.spin { width:42px; height:42px; border-radius:13px; display:flex; align-items:center; justify-content:center; font-size:20px; flex-shrink:0; }
+.sp-shade    { background:#d1fae5; } .sp-danger   { background:#fee2e2; }
+.sp-vending  { background:#dbeafe; } .sp-shop     { background:#ede9fe; }
+.sp-hospital { background:#fee2e2; } .sp-rest     { background:#cffafe; }
+.sbody { flex:1; min-width:0; }
+.sname { font-size:14px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.smeta { display:flex; gap:5px; margin-top:3px; flex-wrap:wrap; align-items:center; }
+.stag { font-size:10px; font-weight:700; padding:2px 8px; border-radius:8px; white-space:nowrap; }
+.t-shade    { background:#d1fae5; color:#065f46; } .t-danger   { background:#fee2e2; color:#991b1b; }
+.t-vending  { background:#dbeafe; color:#1e40af; } .t-shop     { background:#ede9fe; color:#5b21b6; }
+.t-hospital { background:#fee2e2; color:#991b1b; } .t-rest     { background:#cffafe; color:#155e75; }
+.sdist { font-size:11px; color:var(--muted); font-weight:600; text-align:right; flex-shrink:0; line-height:1.5; }
+
+/* 詳細パネル */
+#detail { position:fixed; inset:0; z-index:700; display:flex; flex-direction:column; justify-content:flex-end; pointer-events:none; opacity:0; transition:opacity .25s; }
+#detail.open { pointer-events:all; opacity:1; }
+#detail-backdrop { position:absolute; inset:0; background:rgba(0,0,0,.25); }
+#detail-card { position:relative; z-index:1; background:var(--surface); border-radius:24px 24px 0 0; padding:0 0 var(--safe); box-shadow:0 -4px 32px rgba(0,0,0,.2); transform:translateY(100%); transition:transform .3s cubic-bezier(.32,.72,0,1); max-height:82vh; display:flex; flex-direction:column; overscroll-behavior:contain; }
+#detail.open #detail-card { transform:translateY(0); }
+
+/* 詳細ヘッダー */
+#d-top { flex-shrink:0; padding:16px 16px 0; display:flex; align-items:flex-start; gap:12px; }
+#d-icon { font-size:34px; flex-shrink:0; line-height:1; }
+#d-name { font-size:18px; font-weight:800; flex:1; line-height:1.3; }
+#d-close { width:34px; height:34px; border-radius:50%; background:#f1f5f9; border:none; font-size:18px; cursor:pointer; flex-shrink:0; display:flex; align-items:center; justify-content:center; color:var(--muted); }
+#d-tags { padding:10px 16px 4px; display:flex; gap:6px; flex-wrap:wrap; flex-shrink:0; }
+.d-dist { display:inline-flex; align-items:center; gap:4px; background:#f0fdf4; color:var(--green); font-size:13px; font-weight:700; padding:5px 13px; border-radius:18px; }
+
+/* 営業時間バナー */
+#d-hours-banner { flex-shrink:0; margin:0 16px 4px; border-radius:12px; padding:10px 14px; display:flex; align-items:center; gap:10px; }
+.hb-open  { background:#f0fdf4; border:1.5px solid #86efac; }
+.hb-close { background:#fff7ed; border:1.5px solid #fdba74; }
+.hb-unknown { background:#f8fafc; border:1.5px solid var(--border); }
+.hb-allday  { background:#eff6ff; border:1.5px solid #93c5fd; }
+.hb-icon { font-size:18px; flex-shrink:0; }
+.hb-text { font-size:12px; line-height:1.5; }
+.hb-status { font-weight:800; font-size:13px; }
+
+#d-body { overflow-y:auto; flex:1; padding:4px 16px 4px; -webkit-overflow-scrolling:touch; }
+.drow { display:flex; gap:10px; padding:11px 0; border-bottom:1px solid var(--border); align-items:flex-start; }
+.drow:last-child { border-bottom:none; }
+.dico { font-size:16px; width:22px; text-align:center; flex-shrink:0; margin-top:2px; }
+.dtxt { font-size:13px; line-height:1.65; color:var(--text); }
+.dtxt small { color:var(--muted); font-size:11px; }
+
+#d-actions { flex-shrink:0; display:flex; gap:10px; padding:12px 16px; border-top:1px solid var(--border); }
+.dbtn { flex:1; padding:13px; border-radius:14px; border:none; font-size:13px; font-weight:700; font-family:inherit; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:5px; }
+.dbtn-pri { background:#0f172a; color:#fff; }
+.dbtn-sec { background:#f1f5f9; color:var(--text); }
+
+/* マーカー */
+.mkr { display:flex; align-items:center; justify-content:center; border-radius:50%; border:2.5px solid #fff; box-shadow:0 2px 8px rgba(0,0,0,.3); font-size:15px; cursor:pointer; }
+.user-dot { width:16px; height:16px; border-radius:50%; background:#3b82f6; border:3px solid #fff; animation:pulse 2s infinite; box-shadow:0 0 0 0 rgba(59,130,246,.5); }
+@keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(59,130,246,.4)} 70%{box-shadow:0 0 0 10px rgba(59,130,246,0)} 100%{box-shadow:0 0 0 0 rgba(59,130,246,0)} }
+
+
+/* 散歩ルート */
+.route-tabs { display:flex; gap:8px; padding:12px 16px 6px; overflow-x:auto; scrollbar-width:none; }
+.route-tabs::-webkit-scrollbar { display:none; }
+.route-tab { flex:1; min-width:76px; padding:9px 10px; border-radius:14px; border:1.5px solid var(--border); background:#fff; font-size:12px; font-weight:800; color:var(--muted); cursor:pointer; font-family:inherit; }
+.route-tab.on { background:#0f172a; color:#fff; border-color:#0f172a; }
+.route-intro { padding:4px 16px 8px; font-size:12px; color:var(--muted); line-height:1.6; }
+.route-card { margin:10px 16px; padding:14px; border:1.5px solid var(--border); border-radius:18px; background:#fff; box-shadow:0 1px 8px rgba(0,0,0,.06); cursor:pointer; }
+.route-card.active { border-color:#0f172a; box-shadow:0 3px 14px rgba(15,23,42,.18); }
+.route-title { display:flex; justify-content:space-between; gap:10px; align-items:flex-start; }
+.route-name { font-size:15px; font-weight:900; color:var(--text); line-height:1.35; }
+.route-time { flex-shrink:0; background:#f1f5f9; border-radius:14px; padding:5px 10px; font-size:12px; font-weight:900; color:#0f172a; }
+.route-mood { margin-top:6px; font-size:12px; color:var(--muted); line-height:1.55; }
+.route-meta { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; }
+.route-pill { font-size:10px; font-weight:800; padding:4px 8px; border-radius:999px; background:#f0fdf4; color:#065f46; }
+.route-pill.hot { background:#fee2e2; color:#991b1b; }
+.route-steps { margin-top:10px; padding-top:10px; border-top:1px dashed var(--border); font-size:12px; color:#334155; line-height:1.7; }
+.route-actions { display:flex; gap:8px; margin-top:10px; }
+.route-btn { flex:1; border:none; border-radius:12px; padding:10px; font-size:12px; font-weight:800; font-family:inherit; cursor:pointer; }
+.route-btn.primary { background:#0f172a; color:#fff; }
+.route-btn.secondary { background:#f1f5f9; color:#0f172a; }
+.route-legend { position:fixed; left:12px; bottom:86px; z-index:320; background:#fff; border-radius:14px; padding:8px 10px; box-shadow:0 2px 12px rgba(0,0,0,.15); font-size:11px; font-weight:800; color:#334155; display:none; }
+.route-legend.show { display:block; }
+.route-stop-label { background:#fff; border:2px solid #0f172a; border-radius:50%; width:24px; height:24px; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:900; box-shadow:0 1px 6px rgba(0,0,0,.25); }
+
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+<button id="btn-locate" onclick="locate()">📍</button>
+<div id="route-legend" class="route-legend">🟣 選択中の散歩ルート</div>
+
+<div id="topbar">
+  <div id="searchbox">
+    <span class="app-name">🌿 かげさんぽ</span>
+    <input id="q" type="text" placeholder="スポットを検索…" oninput="onSearch()" autocomplete="off">
+    <span class="temp-badge" id="tbadge">🌡️ --°C</span>
+  </div>
+  <div id="chips">
+    <div class="chip on" data-f="all"      onclick="setF('all',this)">🗺️ すべて</div>
+    <div class="chip"    data-f="shade"    onclick="setF('shade',this)">🌳 日陰</div>
+    <div class="chip"    data-f="danger"   onclick="setF('danger',this)">☀️ 日向危険</div>
+    <div class="chip"    data-f="vending"  onclick="setF('vending',this)">🥤 自販機</div>
+    <div class="chip"    data-f="shop"     onclick="setF('shop',this)">🏪 お店</div>
+    <div class="chip"    data-f="hospital" onclick="setF('hospital',this)">🏥 病院</div>
+    <div class="chip"    data-f="rest"     onclick="setF('rest',this)">🪑 休憩</div>
+    <div class="chip"    data-f="route"    onclick="setRouteMode(this)">🚶 さんぽ</div>
+  </div>
+</div>
+
+<div id="sheet">
+  <div id="sheet-handle-area" onclick="toggleSheet()">
+    <div id="sheet-handle"></div>
+    <div id="sheet-header">
+      <span id="sheet-label">周辺のスポット</span>
+      <span id="sheet-count">0件</span>
+    </div>
+  </div>
+  <div id="spot-list"></div>
+</div>
+
+<div id="detail">
+  <div id="detail-backdrop" onclick="closeD()"></div>
+  <div id="detail-card">
+    <div id="d-top">
+      <span id="d-icon"></span>
+      <span id="d-name"></span>
+      <button id="d-close" onclick="closeD()">✕</button>
+    </div>
+    <div id="d-tags"></div>
+    <div id="d-hours-banner"></div>
+    <div id="d-body"></div>
+    <div id="d-actions">
+      <button class="dbtn dbtn-sec" onclick="gmaps()">🗺️ Googleマップ</button>
+      <button class="dbtn dbtn-pri" onclick="closeD()">✓ 確認した</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ══════════════════════════════
+// スポットデータ（最新版）
+// ══════════════════════════════
+const SPOTS = [
+  // 自販機
+  { id:1,  name:"ペプシ自販機①",           cat:"vending",  lat:33.97356285, lng:134.3602897, note:"",                                          hours:"なし",    closed:"" },
+  { id:2,  name:"ペプシ自販機②",           cat:"vending",  lat:33.9729082,  lng:134.3627115, note:"",                                          hours:"なし",    closed:"" },
+  { id:3,  name:"ペプシ自販機③",           cat:"vending",  lat:33.97289541, lng:134.3626096, note:"",                                          hours:"なし",    closed:"" },
+  { id:5,  name:"コカコーラ自販機（道の駅）",cat:"vending",  lat:33.9736052,  lng:134.3676746, note:"道の駅に5個くらいある",                     hours:"なし",    closed:"" },
+  { id:12, name:"イルローザの森 自販機",    cat:"vending",  lat:34.02274026, lng:134.4236123, note:"神山町の森林公園。自然をより感じたいときにおすすめ！",hours:"なし",closed:"" },
+
+  // お店
+  { id:4,  name:"コンビニ（ファミマ）",     cat:"shop",     lat:33.96917666, lng:134.3457274, note:"",                                          hours:"24時間",  closed:"" },
+  { id:"p",name:"ABCショップ やすおか",    cat:"shop",     lat:33.96770845, lng:134.3488537, note:"",                                          hours:"8:00〜19:00", closed:"日曜日" },
+  { id:7,  name:"ショップ かたやま21",     cat:"shop",     lat:33.96834864, lng:134.3425208, note:"",                                          hours:"8:00〜20:00",closed:"日曜日" },
+  { id:15, name:"ヤマザキショップ",        cat:"shop",     lat:33.96561101, lng:134.3312753, note:"",                                          hours:"6:00〜19:00",closed:"" },
+  { id:21, name:"豆ちよ",                 cat:"shop",     lat:33.96776362, lng:134.3480023, note:"冷たい飲み物が飲めるよ",                      hours:"10:00〜17:00",closed:"月曜日" },
+  { id:25, name:"道の駅",                 cat:"shop",     lat:33.973719,   lng:134.3671158, note:"自販機・ベンチあり",                          hours:"9:00〜17:00", closed:"" },
+  { id:26, name:"温泉",                   cat:"shop",     lat:33.9719588,  lng:134.3708339, note:"無料休憩所あり",                              hours:"10:00〜20:00",closed:"第４火曜日" },
+  { id:27, name:"粟カフェ",              cat:"shop",     lat:33.97507931, lng:134.370938,  note:"ケーキが絶品",                                hours:"11:30〜16:00",closed:"木曜日・金曜日" },
+  { id:28, name:"神山ビール",            cat:"shop",     lat:33.96957663, lng:134.3705554, note:"ビールだけじゃなく、トーストも焼いてくれます", hours:"土12:00〜18:00 / 日10:00〜18:00",closed:"月〜金" },
+  { id:29, name:"松葉庵",               cat:"shop",     lat:33.978209,   lng:134.3739264, note:"神山町に愛される喫茶店。コーヒーや定食が楽しめます。",hours:"10:00〜18:00",closed:"火曜日" },
+  { id:32, name:"林商店",              cat:"shop",     lat:33.97998377, lng:134.3764652, note:"お母さんが作ったような温かい惣菜とうどんが楽しめます。",hours:"11:00〜14:00",closed:"月曜日・木曜日" },
+  { id:33, name:"かま屋",              cat:"shop",     lat:33.96910247, lng:134.346927,  note:"神山産農作物をふんだんに使った食堂・パン・食品店。",hours:"11:00〜15:00",closed:"月曜日・火曜日" },
+
+  // 日陰スポット
+  { id:8,  name:"脇道",                  cat:"shade",    lat:33.97174018, lng:134.3619314, note:"",                                           hours:"なし",    closed:"" },
+  { id:9,  name:"林道（ファミマへの道）", cat:"shade",    lat:33.96755,    lng:134.3597873, note:"ファミマやコンビニへ行く時に通る",             hours:"なし",    closed:"" },
+  { id:10, name:"OFFICE横 桜並木",       cat:"shade",    lat:33.97360031, lng:134.3599201, note:"桜が咲く時期はとても綺麗な枝垂れ桜が楽しめます。普通に道路なので車に注意⚠️",hours:"なし",closed:"" },
+  { id:11, name:"道（神山ビール方面）",   cat:"shade",    lat:33.9696937,  lng:134.3700973, note:"神山ビールやコットンフィールドへ行く道",        hours:"なし",    closed:"" },
+  { id:17, name:"SHIZQ LAB.の道",       cat:"shade",    lat:33.97664559, lng:134.3612607, note:"",                                           hours:"なし",    closed:"" },
+  { id:22, name:"雨乞いの滝（びみょ）",  cat:"shade",    lat:33.95079627, lng:134.3354036, note:"滝周辺は涼しいけど道中は暑いよ",               hours:"なし",    closed:"" },
+  { id:30, name:"鮎喰川（高専近く）",    cat:"shade",    lat:33.97046986, lng:134.361519,  note:"浅いところは浅く、深いところは深いので子供から大人まで楽しめる。",hours:"なし",closed:"" },
+  { id:31, name:"鮎喰川（コンビニ近く）",cat:"shade",    lat:33.96814206, lng:134.3544245, note:"深いので川泳ぎ上級者向け",                     hours:"なし",    closed:"" },
+  { id:34, name:"温泉近くの川",          cat:"shade",    lat:33.97135022, lng:134.3697666, note:"",                                           hours:"なし",    closed:"" },
+
+  // 日向危険
+  { id:13, name:"HOMEとOFFICEの間の一本道",cat:"danger", lat:33.97354626, lng:134.3618199, note:"陰になる場所がなく、日がサンサンと出てる時は熱いかも。",hours:"なし",closed:"" },
+  { id:14, name:"道の駅へのみち",         cat:"danger",  lat:33.97350849, lng:134.3668005, note:"",                                           hours:"なし",    closed:"" },
+  { id:35, name:"ファミマ・城西のとこのみち",cat:"danger",lat:33.96876529, lng:134.3468778, note:"遮蔽物がなく気温が上がりがちです。",            hours:"なし",    closed:"" },
+  { id:36, name:"寄井座のみち",          cat:"danger",  lat:33.96740281, lng:134.3467554, note:"遮蔽物がなく気温が上がりがちです。",             hours:"なし",    closed:"" },
+
+  // 病院
+  { id:18, name:"おうち診療所",          cat:"hospital", lat:33.97407046, lng:134.3692111, note:"",                                           hours:"9:00〜17:00",closed:"土曜日・日曜日" },
+
+  // 休憩スポット
+  { id:16, name:"すだっちこクラブ",      cat:"rest",     lat:33.96972671, lng:134.3583497, note:"学童",                                        hours:"特定不可", closed:"" },
+  { id:19, name:"鮎喰川コモン",          cat:"rest",     lat:33.97080264, lng:134.3612932, note:"",                                           hours:"9:00〜18:00", closed:"火曜日" },
+  { id:20, name:"大粟山神社",            cat:"rest",     lat:33.97285389, lng:134.3682989, note:"",                                           hours:"なし",     closed:"" },
+  { id:23, name:"森の学校みっけ",        cat:"rest",     lat:33.96812233, lng:134.3717757, note:"森の中にあるので避暑地。",                     hours:"特定不可", closed:"" },
+  { id:24, name:"コットンフィールド",     cat:"rest",     lat:33.96920182, lng:134.3697624, note:"自然豊かなキャンプ場",                         hours:"24時間",   closed:"" },
+  { id:25, name:"道の駅（休憩）",        cat:"rest",     lat:33.973719,   lng:134.3671161, note:"自販機・ベンチあり",                           hours:"9:00〜17:00",closed:"" },
+  { id:26, name:"温泉（休憩所）",        cat:"rest",     lat:33.9719588,  lng:134.3708342, note:"無料休憩所あり",                              hours:"10:00〜20:00",closed:"第４火曜日" },
+  { id:27, name:"粟カフェ（休憩）",      cat:"rest",     lat:33.97507931, lng:134.370941,  note:"ケーキが絶品",                                hours:"11:30〜16:00",closed:"木曜日・金曜日" },
+  { id:28, name:"神山ビール（休憩）",    cat:"rest",     lat:33.96957663, lng:134.3705557, note:"川沿い・木陰席あり",                          hours:"土12:00〜18:00 / 日10:00〜18:00",closed:"月〜金" },
+  { id:29, name:"松葉庵（休憩）",       cat:"rest",     lat:33.978209,   lng:134.3739267, note:"コーヒーや定食が楽しめます。",                  hours:"10:00〜18:00",closed:"火曜日" },
+];
+
+const CAT = {
+  shade:   { e:"🌳", label:"激アツ日陰",   color:"#059669", tc:"t-shade",    pc:"sp-shade",   can:["🌳 日陰を通れる","🌡️ 体感温度が下がる"] },
+  danger:  { e:"☀️", label:"アチアチ注意", color:"#dc2626", tc:"t-danger",   pc:"sp-danger",  can:["⚠️ できるだけ避けたいルート","🌂 日傘・帽子必須"] },
+  vending: { e:"🥤", label:"自販機",       color:"#2563eb", tc:"t-vending",  pc:"sp-vending", can:["🥤 飲み物を買える"] },
+  shop:    { e:"🏪", label:"お店",         color:"#7c3aed", tc:"t-shop",     pc:"sp-shop",    can:["🏪 飲み物・食事を買える","❄️ 冷房で涼める"] },
+  hospital:{ e:"🏥", label:"病院",         color:"#dc2626", tc:"t-hospital", pc:"sp-hospital",can:["🏥 熱中症の診察・処置ができる"] },
+  rest:    { e:"🪑", label:"休憩スポット", color:"#0891b2", tc:"t-rest",     pc:"sp-rest",    can:["🪑 休憩できる","💧 涼しいスペースあり"] },
+};
+
+// ══════════════════════════════
+// 状態
+// ══════════════════════════════
+let map, mkrLayers=[], userLat=33.97356, userLng=134.36019;
+let curFilter='all', curQ='', sheetH='peek', activeSpot=null, locMkr=null;
+let routeMode=false, routeMinutes=5, activeRouteId=null, routeLine=null, routeStopMarkers=[];
+
+
+// ══════════════════════════════
+// 散歩ルートデータ
+// 高専スタート・高専ゴール。道順が分かるように曲がり角を多めに入れています。
+// ══════════════════════════════
+const SCHOOL = { name:'神山まるごと高専', lat:33.97356, lng:134.36019 };
+const WALK_ROUTES = [
+  {
+    id:'r5_sakura', min:5, name:'桜並木だけ、さっと深呼吸', mood:'授業の合間に、頭を軽く冷ましたいとき。', distance:'約450m', shade:'高め', hot:'少なめ', color:'#7c3aed',
+    stops:['高専','OFFICE横 桜並木','高専'],
+    points:[[33.97356,134.36019],[33.97360031,134.3599201],[33.97328,134.35948],[33.97308,134.35962],[33.97356,134.36019]],
+    notes:['すぐ戻れる','日陰多め','車に注意']
+  },
+  {
+    id:'r5_river', min:5, name:'鮎喰川ちら見コース', mood:'水辺を見て、気持ちだけ涼しくしたいとき。', distance:'約520m', shade:'ふつう', hot:'少なめ', color:'#0891b2',
+    stops:['高専','鮎喰川コモン','鮎喰川','高専'],
+    points:[[33.97356,134.36019],[33.97285,134.36070],[33.97180,134.36105],[33.97080264,134.3612932],[33.97046986,134.361519],[33.97180,134.36105],[33.97285,134.36070],[33.97356,134.36019]],
+    notes:['川が見える','休憩スポットあり','短時間向け']
+  },
+  {
+    id:'r5_vending', min:5, name:'水分補給ミニループ', mood:'喉がかわいたけど、遠出はしたくないとき。', distance:'約480m', shade:'ふつう', hot:'一部あり', color:'#2563eb',
+    stops:['高専','ペプシ自販機①','HOMEとOFFICEの間','高専'],
+    points:[[33.97356,134.36019],[33.97356285,134.3602897],[33.97354626,134.3618199],[33.97310,134.36135],[33.97356,134.36019]],
+    notes:['自販機あり','日向区間あり','日傘おすすめ']
+  },
+  {
+    id:'r15_michinoeki', min:15, name:'道の駅でひと休みコース', mood:'飲み物・ベンチ・休憩をまとめて取りたいとき。', distance:'約1.6km', shade:'ふつう', hot:'道の駅前注意', color:'#7c3aed',
+    stops:['高専','道の駅へのみち','道の駅','大粟山神社','高専'],
+    points:[[33.97356,134.36019],[33.97355,134.36182],[33.97350849,134.3668005],[33.973719,134.3671158],[33.97285389,134.3682989],[33.97320,134.36650],[33.97340,134.36380],[33.97356,134.36019]],
+    notes:['自販機あり','ベンチあり','暑い道を避けにくい']
+  },
+  {
+    id:'r15_shizq', min:15, name:'SHIZQ LABの道さんぽ', mood:'静かな道を歩いて、少しだけ冒険したいとき。', distance:'約1.4km', shade:'高め', hot:'少なめ', color:'#059669',
+    stops:['高専','OFFICE横 桜並木','SHIZQ LAB.の道','高専'],
+    points:[[33.97356,134.36019],[33.97360031,134.3599201],[33.97445,134.36025],[33.97540,134.36075],[33.97664559,134.3612607],[33.97540,134.36075],[33.97445,134.36025],[33.97356,134.36019]],
+    notes:['木陰多め','ゆるい坂あり','静か']
+  },
+  {
+    id:'r15_riverrest', min:15, name:'川風リフレッシュコース', mood:'涼しさ優先。水辺と休憩を入れたいとき。', distance:'約1.5km', shade:'高め', hot:'少なめ', color:'#0891b2',
+    stops:['高専','鮎喰川コモン','鮎喰川','脇道','高専'],
+    points:[[33.97356,134.36019],[33.97280,134.36058],[33.97174018,134.3619314],[33.97080264,134.3612932],[33.97046986,134.361519],[33.97174018,134.3619314],[33.97290,134.36110],[33.97356,134.36019]],
+    notes:['川沿い','日陰あり','休憩しやすい']
+  },
+  {
+    id:'r30_onsen', min:30, name:'温泉・粟カフェゆったり周遊', mood:'休日っぽく歩きたい。寄り道候補も欲しいとき。', distance:'約3.1km', shade:'ふつう', hot:'一部あり', color:'#7c3aed',
+    stops:['高専','道の駅','温泉','粟カフェ','高専'],
+    points:[[33.97356,134.36019],[33.97350849,134.3668005],[33.973719,134.3671158],[33.9719588,134.3708339],[33.97507931,134.370938],[33.97420,134.36820],[33.97340,134.36400],[33.97356,134.36019]],
+    notes:['休憩多め','カフェ候補','営業時間確認']
+  },
+  {
+    id:'r30_beer', min:30, name:'川沿いと神山ビール方面コース', mood:'景色を見ながら、少し長めに歩きたいとき。', distance:'約3.0km', shade:'高め', hot:'少なめ', color:'#0891b2',
+    stops:['高専','鮎喰川','神山ビール方面の道','神山ビール','高専'],
+    points:[[33.97356,134.36019],[33.97174018,134.3619314],[33.97046986,134.361519],[33.9696937,134.3700973],[33.96957663,134.3705554],[33.97060,134.36860],[33.97220,134.36520],[33.97356,134.36019]],
+    notes:['川が見える','木陰席候補','帰り道長め']
+  },
+  {
+    id:'r30_coffee', min:30, name:'松葉庵ながめコース', mood:'しっかり歩いて、まちの雰囲気を味わいたいとき。', distance:'約3.4km', shade:'ふつう', hot:'一部あり', color:'#ea580c',
+    stops:['高専','道の駅','粟カフェ','松葉庵','高専'],
+    points:[[33.97356,134.36019],[33.973719,134.3671158],[33.97507931,134.370938],[33.978209,134.3739264],[33.97660,134.37080],[33.97420,134.36640],[33.97356,134.36019]],
+    notes:['喫茶店候補','長め','暑い日は無理しない']
+  }
+];
+
+// ══════════════════════════════
+// 営業時間ロジック
+// ══════════════════════════════
+function getHoursStatus(hours, closed) {
+  if (!hours || hours === 'なし' || hours === '特定不可') {
+    return { cls:'hb-allday', icon:'🌙', status: hours==='特定不可'?'時間不明':'終日利用可', sub:'' };
+  }
+  if (hours === '24時間') return { cls:'hb-allday', icon:'🌙', status:'24時間利用可', sub:'' };
+
+  const now = new Date();
+  const day = ['日','月','火','水','木','金','土'][now.getDay()];
+  const hm = now.getHours()*60 + now.getMinutes();
+
+  // 定休日チェック
+  if (closed && closed !== '') {
+    const closedDays = closed.split('・');
+    if (closedDays.some(d => day.includes(d.replace('曜日','')))) {
+      return { cls:'hb-close', icon:'🔴', status:'本日定休日', sub:`定休日：${closed}` };
+    }
+  }
+
+  // 時間パース（最初の HH:MM〜HH:MM を使う）
+  const m = hours.match(/(\d{1,2}):(\d{2})[〜\-](\d{1,2}):(\d{2})/);
+  if (!m) return { cls:'hb-unknown', icon:'🕐', status:'営業時間', sub:hours };
+
+  const open  = parseInt(m[1])*60 + parseInt(m[2]);
+  const close = parseInt(m[3])*60 + parseInt(m[4]);
+  if (hm >= open && hm < close) {
+    const remaining = close - hm;
+    const sub = remaining<=60 ? `あと${remaining}分で閉店` : `〜${m[3]}:${m[4]}まで営業中`;
+    return { cls:'hb-open', icon:'🟢', status:'営業中', sub };
+  } else if (hm < open) {
+    return { cls:'hb-close', icon:'🔴', status:'準備中', sub:`${m[1]}:${m[2]}から営業` };
+  } else {
+    return { cls:'hb-close', icon:'🔴', status:'本日は閉店', sub:`営業時間：${hours}` };
+  }
+}
+
+// ══════════════════════════════
+// 地図初期化
+// ══════════════════════════════
+function initMap() {
+  map = L.map('map', { center:[33.9725,134.3635], zoom:15, zoomControl:false, tap:true });
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution:'© OpenStreetMap', maxZoom:19
+  }).addTo(map);
+
+  const uIco = L.divIcon({ html:'<div class="user-dot"></div>', className:'', iconSize:[16,16], iconAnchor:[8,8] });
+  locMkr = L.marker([userLat,userLng], {icon:uIco}).addTo(map);
+
+  const sIco = L.divIcon({
+    html:'<div class="mkr" style="width:42px;height:42px;background:#0f172a;font-size:22px;">🏫</div>',
+    className:'', iconSize:[42,42], iconAnchor:[21,42]
+  });
+  L.marker([33.97356,134.36019], {icon:sIco})
+    .bindTooltip('神山まるごと高専', { direction:'top', offset:[0,-44] })
+    .addTo(map);
+
+  renderMkr();
+
+  const h = new Date().getHours();
+  document.getElementById('tbadge').textContent = `🌡️ ${h>=11&&h<=15?36:h>=8&&h<=18?33:28}°C`;
+}
+
+// ══════════════════════════════
+// マーカー
+// ══════════════════════════════
+function renderMkr() {
+  routeMode = false;
+  clearRoute();
+  document.getElementById('sheet-label').textContent = '周辺のスポット';
+  mkrLayers.forEach(m => map.removeLayer(m));
+  mkrLayers = [];
+  const list = SPOTS.filter(s =>
+    (curFilter==='all' || s.cat===curFilter) &&
+    (!curQ || s.name.includes(curQ))
+  );
+  // 重複IDを除去（複数カテゴリスポット対策）
+  const seen = new Set();
+  const unique = list.filter(s => {
+    const key = `${s.lat},${s.lng}`;
+    if (seen.has(key)) return false;
+    seen.add(key); return true;
+  });
+
+  document.getElementById('sheet-count').textContent = unique.length + '件';
+
+  unique.forEach(s => {
+    const c = CAT[s.cat];
+    const icon = L.divIcon({
+      html:`<div class="mkr" style="width:38px;height:38px;background:${c.color};">${c.e}</div>`,
+      className:'', iconSize:[38,38], iconAnchor:[19,38]
+    });
+    const m = L.marker([s.lat,s.lng], {icon}).addTo(map).on('click', ()=>openD(s));
+    mkrLayers.push(m);
+  });
+  renderList(unique);
+}
+
+// ══════════════════════════════
+// リスト
+// ══════════════════════════════
+function renderList(list) {
+  const el = document.getElementById('spot-list');
+  if (!list.length) {
+    el.innerHTML = '<div style="padding:32px;text-align:center;color:#94a3b8;font-size:13px;">スポットが見つかりませんでした</div>';
+    return;
+  }
+  const sorted = [...list].map(s=>({...s,d:dist(userLat,userLng,s.lat,s.lng)})).sort((a,b)=>a.d-b.d);
+  el.innerHTML = sorted.map(s => {
+    const c = CAT[s.cat];
+    const dm = Math.max(1, Math.round(s.d/80));
+    const ds = s.d<1000 ? `${Math.round(s.d)}m` : `${(s.d/1000).toFixed(1)}km`;
+    const hs = getHoursStatus(s.hours, s.closed);
+    const openDot = hs.cls==='hb-open' ? '🟢 ' : hs.cls==='hb-close' ? '🔴 ' : '';
+    return `<div class="srow" onclick='openD(${JSON.stringify(s)})'>
+      <div class="spin ${c.pc}">${c.e}</div>
+      <div class="sbody">
+        <div class="sname">${s.name}</div>
+        <div class="smeta">
+          <span class="stag ${c.tc}">${c.label}</span>
+          <span style="font-size:11px;color:#64748b">${openDot}${hs.status}</span>
+        </div>
+      </div>
+      <div class="sdist"><div>${ds}</div><div style="font-size:10px">徒歩約${dm}分</div></div>
+    </div>`;
+  }).join('');
+}
+
+// ══════════════════════════════
+// 詳細パネル
+// ══════════════════════════════
+function openD(s) {
+  if (!s) return;
+  activeSpot = s;
+  const c = CAT[s.cat];
+  const d = dist(userLat, userLng, s.lat, s.lng);
+  const dm = Math.max(1, Math.round(d/80));
+  const ds = d<1000 ? `${Math.round(d)}m` : `${(d/1000).toFixed(1)}km`;
+  const hs = getHoursStatus(s.hours, s.closed);
+
+  document.getElementById('d-icon').textContent = c.e;
+  document.getElementById('d-name').textContent = s.name;
+  document.getElementById('d-tags').innerHTML =
+    `<span class="stag ${c.tc}">${c.label}</span>
+     <span class="d-dist">🚶 ${ds}・徒歩約${dm}分</span>`;
+
+  // 営業時間バナー
+  const banner = document.getElementById('d-hours-banner');
+  banner.className = `d-hours-banner ${hs.cls}`;
+  banner.innerHTML = `<div class="hb-icon">${hs.icon}</div>
+    <div class="hb-text">
+      <div class="hb-status">${hs.status}</div>
+      ${hs.sub ? `<div style="color:#64748b;font-size:11px">${hs.sub}</div>` : ''}
+    </div>`;
+  banner.style.display = (s.hours && s.hours !== 'なし') ? 'flex' : 'none';
+
+  // 詳細行
+  let rows = '';
+  if (c.can.length) rows += `<div class="drow"><div class="dico">💡</div><div class="dtxt">${c.can.join('　')}</div></div>`;
+  if (s.hours && s.hours !== 'なし') {
+    rows += `<div class="drow"><div class="dico">🕐</div><div class="dtxt">${s.hours}</div></div>`;
+  }
+  if (s.closed && s.closed !== '') {
+    rows += `<div class="drow"><div class="dico">📅</div><div class="dtxt">定休日：${s.closed}</div></div>`;
+  }
+  if (s.note) rows += `<div class="drow"><div class="dico">📝</div><div class="dtxt">${s.note}</div></div>`;
+  rows += `<div class="drow"><div class="dico">📍</div><div class="dtxt"><small>${s.lat.toFixed(5)}, ${s.lng.toFixed(5)}</small></div></div>`;
+  document.getElementById('d-body').innerHTML = rows;
+
+  document.getElementById('detail').classList.add('open');
+  map.flyTo([s.lat, s.lng], 16, { animate:true, duration:0.4 });
+  setSheet('peek');
+}
+function closeD() { document.getElementById('detail').classList.remove('open'); activeSpot = null; }
+function gmaps()  { if (activeSpot) window.open(`https://www.google.com/maps/search/?api=1&query=${activeSpot.lat},${activeSpot.lng}`, '_blank'); }
+
+
+// ══════════════════════════════
+// 散歩ルートUI
+// ══════════════════════════════
+function setRouteMode(el) {
+  routeMode = true;
+  curFilter = 'route';
+  document.querySelectorAll('.chip').forEach(c=>c.classList.remove('on'));
+  if (el) el.classList.add('on');
+  clearSpotMarkers();
+  renderRoutes();
+  setSheet('half');
+}
+function clearSpotMarkers() {
+  mkrLayers.forEach(m => map.removeLayer(m));
+  mkrLayers = [];
+  document.getElementById('sheet-count').textContent = WALK_ROUTES.filter(r=>r.min===routeMinutes).length + '件';
+}
+function renderRoutes() {
+  const el = document.getElementById('spot-list');
+  const routes = WALK_ROUTES.filter(r => r.min === routeMinutes);
+  document.getElementById('sheet-label').textContent = 'おすすめ散歩ルート';
+  document.getElementById('sheet-count').textContent = routes.length + '件';
+  el.innerHTML = `
+    <div class="route-tabs">
+      ${[5,15,30].map(m=>`<button class="route-tab ${routeMinutes===m?'on':''}" onclick="changeRouteMinutes(${m})">${m}分</button>`).join('')}
+    </div>
+    <div class="route-intro">高専スタート・高専ゴール。気分に合わせて選べます。</div>
+    ${routes.map(r=>routeCardHTML(r)).join('')}
+  `;
+  if (!activeRouteId || !routes.some(r=>r.id===activeRouteId)) {
+    drawRoute(routes[0], false);
+  }
+}
+function routeCardHTML(r) {
+  const active = r.id === activeRouteId ? ' active' : '';
+  return `<div class="route-card${active}" onclick="selectRoute('${r.id}')">
+    <div class="route-title">
+      <div class="route-name">${r.name}</div>
+      <div class="route-time">🚶 ${r.min}分</div>
+    </div>
+    <div class="route-mood">${r.mood}</div>
+    <div class="route-meta">
+      <span class="route-pill">${r.distance}</span>
+      <span class="route-pill">日陰 ${r.shade}</span>
+      <span class="route-pill hot">暑さ ${r.hot}</span>
+    </div>
+    <div class="route-steps">${r.stops.map((s,i)=>`${i+1}. ${s}`).join('<br>↓<br>')}</div>
+    <div class="route-actions">
+      <button class="route-btn primary" onclick="event.stopPropagation(); selectRoute('${r.id}')">地図で見る</button>
+      <button class="route-btn secondary" onclick="event.stopPropagation(); openGoogleRoute('${r.id}')">Googleマップ</button>
+    </div>
+  </div>`;
+}
+function changeRouteMinutes(m) {
+  routeMinutes = m;
+  activeRouteId = null;
+  renderRoutes();
+}
+function selectRoute(id) {
+  const r = WALK_ROUTES.find(x => x.id === id);
+  if (!r) return;
+  drawRoute(r, true);
+  renderRoutes();
+}
+function drawRoute(r, zoom=true) {
+  activeRouteId = r.id;
+  if (routeLine) map.removeLayer(routeLine);
+  routeStopMarkers.forEach(m => map.removeLayer(m));
+  routeStopMarkers = [];
+  routeLine = L.polyline(r.points, {
+    color:r.color || '#7c3aed', weight:8, opacity:.9, lineCap:'round', lineJoin:'round'
+  }).addTo(map);
+  routeLine.bindTooltip(`${r.name}｜${r.min}分 ${r.distance}`, {sticky:true});
+  r.points.forEach((p,i) => {
+    if (i===0 || i===r.points.length-1 || i===Math.floor(r.points.length/2)) return;
+  });
+  const stopPoints = pickStopPoints(r);
+  stopPoints.forEach((p,i) => {
+    const icon = L.divIcon({ html:`<div class="route-stop-label">${i+1}</div>`, className:'', iconSize:[24,24], iconAnchor:[12,12] });
+    routeStopMarkers.push(L.marker(p, {icon}).addTo(map).bindTooltip(r.stops[i] || `地点${i+1}`, {direction:'top'}));
+  });
+  document.getElementById('route-legend').classList.add('show');
+  if (zoom) map.fitBounds(routeLine.getBounds(), {padding:[70,70]});
+}
+function pickStopPoints(r) {
+  const pts = [];
+  const n = r.stops.length;
+  for (let i=0; i<n; i++) {
+    const idx = Math.round(i * (r.points.length-1) / (n-1));
+    pts.push(r.points[idx]);
+  }
+  return pts;
+}
+function clearRoute() {
+  if (routeLine) map.removeLayer(routeLine);
+  routeLine = null;
+  routeStopMarkers.forEach(m => map.removeLayer(m));
+  routeStopMarkers = [];
+  document.getElementById('route-legend').classList.remove('show');
+  activeRouteId = null;
+}
+function openGoogleRoute(id) {
+  const r = WALK_ROUTES.find(x => x.id === id);
+  if (!r) return;
+  const origin = `${SCHOOL.lat},${SCHOOL.lng}`;
+  const destination = `${SCHOOL.lat},${SCHOOL.lng}`;
+  const middle = r.points.slice(1,-1).filter((_,i)=>i%2===0).slice(0,8).map(p=>p.join(',')).join('|');
+  const url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}&travelmode=walking&waypoints=${encodeURIComponent(middle)}`;
+  window.open(url, '_blank');
+}
+
+// ══════════════════════════════
+// フィルター・検索
+// ══════════════════════════════
+function setF(f, el) {
+  curFilter = f;
+  document.querySelectorAll('.chip').forEach(c=>c.classList.remove('on'));
+  el.classList.add('on');
+  renderMkr();
+  setSheet('half');
+}
+function onSearch() { curQ = document.getElementById('q').value.trim(); renderMkr(); }
+
+// ══════════════════════════════
+// ボトムシート
+// ══════════════════════════════
+function toggleSheet() {
+  if (sheetH==='peek') setSheet('half');
+  else if (sheetH==='half') setSheet('full');
+  else setSheet('peek');
+}
+function setSheet(h) {
+  sheetH = h;
+  const el = document.getElementById('sheet');
+  const btn = document.getElementById('btn-locate');
+  if (h==='peek')       { el.style.height='72px';  btn.style.bottom='112px'; }
+  else if (h==='half')  { el.style.height='50vh';  btn.style.bottom='calc(50vh + 16px)'; }
+  else                  { el.style.height='80vh';  btn.style.bottom='calc(80vh + 16px)'; }
+}
+
+// ══════════════════════════════
+// 現在地
+// ══════════════════════════════
+function locate() {
+  if (!navigator.geolocation) { map.flyTo([33.9725,134.3635],15); return; }
+  navigator.geolocation.getCurrentPosition(pos => {
+    userLat = pos.coords.latitude; userLng = pos.coords.longitude;
+    if (locMkr) map.removeLayer(locMkr);
+    const ico = L.divIcon({ html:'<div class="user-dot"></div>', className:'', iconSize:[16,16], iconAnchor:[8,8] });
+    locMkr = L.marker([userLat,userLng],{icon:ico}).addTo(map);
+    map.flyTo([userLat,userLng], 16);
+    renderMkr();
+  }, ()=>map.flyTo([33.9725,134.3635],15));
+}
+
+// ══════════════════════════════
+// 距離
+// ══════════════════════════════
+function dist(a,b,c,d) {
+  const R=6371000, dLat=(c-a)*Math.PI/180, dLng=(d-b)*Math.PI/180;
+  const x = Math.sin(dLat/2)**2 + Math.cos(a*Math.PI/180)*Math.cos(c*Math.PI/180)*Math.sin(dLng/2)**2;
+  return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));
+}
+
+initMap();
+</script>
+</body>
+</html>
